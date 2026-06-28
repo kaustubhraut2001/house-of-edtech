@@ -24,6 +24,8 @@ import {
 } from "@/lib/utils/api";
 import type { SyncResult } from "@/types";
 
+export const dynamic = "force-dynamic";
+
 // Max payload size: 500KB per sync batch
 const MAX_PAYLOAD_BYTES = 500 * 1024;
 

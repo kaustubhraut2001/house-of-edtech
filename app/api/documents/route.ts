@@ -18,6 +18,8 @@ import {
   withErrorHandler,
 } from "@/lib/utils/api";
 
+export const dynamic = "force-dynamic";
+
 // GET /api/documents
 export async function GET() {
   return withErrorHandler(async () => {

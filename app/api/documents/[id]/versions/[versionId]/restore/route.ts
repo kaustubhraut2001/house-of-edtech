@@ -16,6 +16,8 @@ import {
   withErrorHandler,
 } from "@/lib/utils/api";
 
+export const dynamic = "force-dynamic";
+
 interface Params {
   params: Promise<{ id: string; versionId: string }>;
 }

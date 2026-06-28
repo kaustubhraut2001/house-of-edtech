@@ -15,6 +15,8 @@ import {
   withErrorHandler,
 } from "@/lib/utils/api";
 
+export const dynamic = "force-dynamic";
+
 export async function POST(req: NextRequest) {
   return withErrorHandler(async () => {
     const body = await req.json();
