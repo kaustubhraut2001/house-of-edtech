@@ -16,6 +16,8 @@ import {
   withErrorHandler,
 } from "@/lib/utils/api";
 
+export const dynamic = "force-dynamic";
+
 // Build the prompt for each AI action
 function buildPrompt(action: string, text: string, targetLanguage?: string): string {
   switch (action) {
