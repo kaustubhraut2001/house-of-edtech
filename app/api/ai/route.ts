@@ -53,35 +53,68 @@ export async function POST(req: NextRequest) {
     const { action, text, targetLanguage } = parsed.data;
     const prompt = buildPrompt(action, text, targetLanguage);
 
-    // Call Anthropic Claude API
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) {
+    // Check for API Keys
+    const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+    const anthropicKey = process.env.ANTHROPIC_API_KEY;
+
+    if (!geminiKey && !anthropicKey) {
       return errorResponse("AI service is not configured", 503);
     }
 
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 1024,
-        messages: [{ role: "user", content: prompt }],
-      }),
-    });
+    let result = "";
 
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error("[AI API Error]", errText);
-      return errorResponse("AI service request failed", 502);
+    if (geminiKey) {
+      // Call Google Gemini API
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            contents: [
+              {
+                parts: [{ text: prompt }],
+              },
+            ],
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const errText = await response.text();
+        console.error("[Gemini API Error]", errText);
+        return errorResponse("AI service request failed", 502);
+      }
+
+      const aiData = await response.json();
+      result = aiData?.candidates?.[0]?.content?.parts?.[0]?.text ?? "No response from AI service.";
+    } else {
+      // Call Anthropic Claude API
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": anthropicKey!,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model: "claude-haiku-4-5-20251001",
+          max_tokens: 1024,
+          messages: [{ role: "user", content: prompt }],
+        }),
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        console.error("[Anthropic API Error]", errText);
+        return errorResponse("AI service request failed", 502);
+      }
+
+      const aiData = await response.json();
+      result = aiData?.content?.[0]?.text ?? "No response from AI service.";
     }
-
-    const aiData = await response.json();
-    const result =
-      aiData?.content?.[0]?.text ?? "No response from AI service.";
 
     return NextResponse.json({ data: { result, action } });
   });
