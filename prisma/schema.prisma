@@ -1,0 +1,227 @@
+// Prisma Schema for Local-First Collaborative Document Editor
+// Supports: Users, Documents, Members, Operations, Versions, SyncLogs
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────
+// USER
+// ─────────────────────────────────────────────
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  password      String?   // hashed — null for OAuth users
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  accounts        Account[]
+  sessions        Session[]
+  ownedDocuments  Document[]       @relation("DocumentOwner")
+  memberships     DocumentMember[]
+  operations      Operation[]
+  versions        Version[]
+  syncLogs        SyncLog[]
+
+  @@map("users")
+}
+
+// ─────────────────────────────────────────────
+// AUTH.JS REQUIRED MODELS
+// ─────────────────────────────────────────────
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ─────────────────────────────────────────────
+// DOCUMENT
+// ─────────────────────────────────────────────
+model Document {
+  id        String   @id @default(cuid())
+  title     String   @default("Untitled Document")
+  content   String   @default("") @db.Text
+  ownerId   String
+
+  // Soft delete support
+  deletedAt DateTime?
+
+  // Revision counter — used by sync engine to detect conflicts
+  revision  Int      @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  owner    User             @relation("DocumentOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members  DocumentMember[]
+  versions Version[]
+  operations Operation[]
+  syncLogs SyncLog[]
+
+  @@index([ownerId])
+  @@index([deletedAt])
+  @@map("documents")
+}
+
+// ─────────────────────────────────────────────
+// DOCUMENT MEMBER (Authorization)
+// ─────────────────────────────────────────────
+enum DocumentRole {
+  OWNER
+  EDITOR
+  VIEWER
+}
+
+model DocumentMember {
+  id         String       @id @default(cuid())
+  documentId String
+  userId     String
+  role       DocumentRole @default(VIEWER)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, userId])
+  @@index([documentId])
+  @@index([userId])
+  @@map("document_members")
+}
+
+// ─────────────────────────────────────────────
+// OPERATION (Offline Queue / CRDT operations)
+// ─────────────────────────────────────────────
+enum OperationType {
+  INSERT
+  DELETE
+  UPDATE_TITLE
+  UPDATE_CONTENT
+  CREATE_VERSION
+  RESTORE_VERSION
+}
+
+enum OperationStatus {
+  PENDING
+  SYNCED
+  FAILED
+  CONFLICT
+}
+
+model Operation {
+  id            String          @id @default(cuid())
+  documentId    String
+  userId        String
+  deviceId      String          // identifies the originating client device
+  operationType OperationType
+  payload       Json            // flexible payload per operation type
+  status        OperationStatus @default(PENDING)
+  revision      Int             // document revision this op is based on
+  timestamp     DateTime        // client-side timestamp for ordering
+  queuedAt      DateTime        @default(now())
+  syncedAt      DateTime?
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([documentId, status])
+  @@index([userId])
+  @@index([timestamp])
+  @@map("operations")
+}
+
+// ─────────────────────────────────────────────
+// VERSION (Snapshot / Time Travel)
+// ─────────────────────────────────────────────
+model Version {
+  id         String @id @default(cuid())
+  documentId String
+  createdById String
+  label      String?  // optional user-provided label e.g. "Before major edit"
+  title      String   // snapshot of title at this point
+  content    String   @db.Text // snapshot of content at this point
+  revision   Int      // revision number at the time of snapshot
+
+  createdAt DateTime @default(now())
+
+  document  Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  createdBy User     @relation(fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+  @@index([createdAt])
+  @@map("versions")
+}
+
+// ─────────────────────────────────────────────
+// SYNC LOG (Audit / debugging)
+// ─────────────────────────────────────────────
+enum SyncStatus {
+  SUCCESS
+  CONFLICT
+  ERROR
+}
+
+model SyncLog {
+  id         String     @id @default(cuid())
+  documentId String
+  userId     String
+  deviceId   String
+  status     SyncStatus
+  details    Json?      // optional error/conflict details
+  createdAt  DateTime   @default(now())
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+  @@index([userId])
+  @@index([createdAt])
+  @@map("sync_logs")
+}
